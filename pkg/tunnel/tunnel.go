@@ -188,7 +188,13 @@ func (s *Session) Close() error {
 		return nil
 	}
 	s.closed = true
-	s.conn.Close()
-	s.localConn.Close()
+	err := s.conn.Close()
+	if err != nil {
+		return err
+	}
+	err = s.localConn.Close()
+	if err != nil {
+		return err
+	}
 	return nil
 }

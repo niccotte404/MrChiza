@@ -3,6 +3,7 @@ package morpher
 import (
 	"encoding/json"
 	"os"
+	"sort"
 )
 
 type Profile struct {
@@ -33,21 +34,28 @@ func LoadProfile(path string) (*Profile, error) {
 	return &profile, nil
 }
 
-func (profile *Profile) SelectTransition(currState string, hashValue float64) string {
-	state, ok := profile.States[currState]
+func (p *Profile) SelectTransition(currentState string, hashValue float64) string {
+	st, ok := p.States[currentState]
 	if !ok {
-		return profile.InitState
+		return p.InitState
 	}
 
+	// sort keys for deterministic iteration
+	keys := make([]string, 0, len(st.Transitions))
+	for k := range st.Transitions {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
 	cumulative := 0.0
-	for nextState, prob := range state.Transitions {
-		cumulative += prob
+	for _, nextState := range keys {
+		cumulative += st.Transitions[nextState]
 		if hashValue < cumulative {
 			return nextState
 		}
 	}
 
-	return currState
+	return currentState
 }
 
 func DefaultBrowsingProfile() *Profile {

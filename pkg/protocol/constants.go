@@ -11,10 +11,14 @@ const (
 	FlagFragment  byte = 0x01
 	FlagFinalFrag byte = 0x02
 
-	MaxFrameSize   = 16384          // 16 KB
-	MaxPayloadSize = 16384 - 4 - 16 // minus header minus AEAD tag
+	MaxFrameSize   = 16384 // 16 KB max frame
 	MaxPaddingSize = 1460
-	MinFrameSize   = 4
+
+	PolyHeaderSize = 6
+	MaxDummySize   = 15
+	MaxPayloadSize = MaxFrameSize - PolyHeaderSize - MaxDummySize
+
+	StaticHeaderSize = 6
 
 	DefaultChainDepth = 1
 	MaxChainDepth     = 8
@@ -24,11 +28,9 @@ const (
 	HashSegTiming   = 4  // hash[4:8]
 	HashSegFragment = 8  // hash[8:12]
 	HashSegState    = 12 // hash[12:16]
-	HashSegReserved = 16 // hash[16:32]
 
 	MaxMorphDelay = 2000 * time.Millisecond
-
-	NonceSize = 12 // ChaCha20-Poly1305
-	KeySize   = 32 // 256-bit keys
-	TagSize   = 16 // Poly1305 tag
+	GCMNonceSize  = 12
+	KeySize       = 32 // 256-bit keys
+	GCMTagSize    = 16
 )

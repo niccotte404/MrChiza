@@ -60,7 +60,7 @@ func (morpher *Morpher) Next(payload []byte) Decision {
 		PaddingSize: paddingSize,
 		Delay:       delay,
 		Fragment:    fragment,
-		TargetSize:  len(payload) + paddingSize + protocol.MinFrameSize,
+		TargetSize:  len(payload) + paddingSize + protocol.PolyHeaderSize,
 	}
 }
 

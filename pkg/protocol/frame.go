@@ -21,8 +21,6 @@ type Frame struct {
 	Padding []byte
 }
 
-const StaticHeaderSize = 6 // Length 2B + Type 1B + Flags 1B + PayloadLen 2B
-
 func (frame *Frame) MarshalStatic() ([]byte, error) {
 	totalLen := StaticHeaderSize + len(frame.Payload) + len(frame.Padding)
 	if totalLen > MaxFrameSize {
