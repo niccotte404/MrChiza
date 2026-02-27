@@ -1,11 +1,7 @@
 package tunnel
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"encoding/binary"
 	"errors"
-	"io"
 	"net"
 	"sync"
 	"time"
@@ -20,8 +16,8 @@ var (
 )
 
 type Session struct {
-	conn      net.Conn // TLS
-	localConn net.Conn // Local app connection (SOCKS5 side)
+	framer    *Framer
+	localConn net.Conn
 
 	sendChain *chain.State
 	sendMorph *morpher.Morpher
@@ -29,9 +25,6 @@ type Session struct {
 	recvChain *chain.State
 	recvMorph *morpher.Morpher
 
-	aead    cipher.AEAD
-	sendCtr uint64
-	recvCtr uint64
 	sendMu  sync.Mutex
 	closed  bool
 	closeMu sync.Mutex
@@ -44,28 +37,30 @@ func NewSession(
 	recvChain *chain.State,
 	profile *morpher.Profile,
 	encryptionKey []byte,
+	existingFramer *Framer,
 ) (*Session, error) {
-	block, err := aes.NewCipher(encryptionKey[:32])
-	if err != nil {
-		return nil, err
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
+	var framer *Framer
+	var err error
+
+	if existingFramer != nil {
+		framer = existingFramer
+	} else {
+		framer, err = NewFramer(conn, encryptionKey)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &Session{
-		conn:      conn,
+		framer:    framer,
 		localConn: localConn,
 		sendChain: sendChain,
 		sendMorph: morpher.New(profile, sendChain),
 		recvChain: recvChain,
 		recvMorph: morpher.New(profile, recvChain),
-		aead:      aead,
 	}, nil
 }
 
-// Run starts bidirectional proxying
 func (s *Session) Run() error {
 	errCh := make(chan error, 2)
 	go func() { errCh <- s.proxyOutbound() }()
@@ -84,9 +79,7 @@ func (s *Session) proxyOutbound() error {
 		}
 		payload := buf[:n]
 
-		// get current chain hash before advancing
 		chainHash := s.sendChain.Current()
-		// advance the chain
 		decision := s.sendMorph.Next(payload)
 
 		if decision.Delay > 0 {
@@ -101,7 +94,10 @@ func (s *Session) proxyOutbound() error {
 			Padding: padding,
 		}
 
-		if err := s.sendFrame(frame, chainHash); err != nil {
+		s.sendMu.Lock()
+		err = s.framer.WriteFrame(frame, chainHash)
+		s.sendMu.Unlock()
+		if err != nil {
 			return err
 		}
 	}
@@ -110,8 +106,7 @@ func (s *Session) proxyOutbound() error {
 func (s *Session) proxyInbound() error {
 	for {
 		chainHash := s.recvChain.Current()
-
-		frame, err := s.recvFrame(chainHash)
+		frame, err := s.framer.ReadFrame(chainHash)
 		if err != nil {
 			return err
 		}
@@ -129,58 +124,6 @@ func (s *Session) proxyInbound() error {
 	}
 }
 
-func (s *Session) sendFrame(frame *protocol.Frame, chainHash []byte) error {
-	s.sendMu.Lock()
-	defer s.sendMu.Unlock()
-
-	plaintext, err := frame.MarshalPolymorphic(chainHash)
-	if err != nil {
-		return err
-	}
-
-	s.sendCtr++
-	nonce := make([]byte, s.aead.NonceSize())
-	binary.BigEndian.PutUint64(nonce[s.aead.NonceSize()-8:], s.sendCtr)
-
-	ciphertext := s.aead.Seal(nil, nonce, plaintext, nil)
-
-	lenBuf := make([]byte, 2)
-	binary.BigEndian.PutUint16(lenBuf, uint16(len(ciphertext)))
-
-	if _, err := s.conn.Write(append(lenBuf, ciphertext...)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *Session) recvFrame(chainHash []byte) (*protocol.Frame, error) {
-	lenBuf := make([]byte, 2)
-	if _, err := io.ReadFull(s.conn, lenBuf); err != nil {
-		return nil, err
-	}
-
-	ciphertextLen := int(binary.BigEndian.Uint16(lenBuf))
-	if ciphertextLen > protocol.MaxFrameSize+s.aead.Overhead()+100 {
-		return nil, protocol.ErrFrameTooLarge
-	}
-
-	ciphertext := make([]byte, ciphertextLen)
-	if _, err := io.ReadFull(s.conn, ciphertext); err != nil {
-		return nil, err
-	}
-
-	s.recvCtr++
-	nonce := make([]byte, s.aead.NonceSize())
-	binary.BigEndian.PutUint64(nonce[s.aead.NonceSize()-8:], s.recvCtr)
-
-	plaintext, err := s.aead.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return protocol.UnmarshalPolymorphic(plaintext, chainHash)
-}
-
 func (s *Session) Close() error {
 	s.closeMu.Lock()
 	defer s.closeMu.Unlock()
@@ -188,13 +131,6 @@ func (s *Session) Close() error {
 		return nil
 	}
 	s.closed = true
-	err := s.conn.Close()
-	if err != nil {
-		return err
-	}
-	err = s.localConn.Close()
-	if err != nil {
-		return err
-	}
+	s.localConn.Close()
 	return nil
 }

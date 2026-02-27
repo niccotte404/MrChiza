@@ -73,8 +73,8 @@ func UnmarshalStatic(reader io.Reader) (*Frame, error) {
 
 type polyLayout struct {
 	dummyLen     int
-	slotPerm     [6]int
-	xorMask      [6]byte
+	slotPerm     [PolyHeaderSize]int
+	xorMask      [PolyHeaderSize]byte
 	payloadFirst bool
 }
 
@@ -83,15 +83,15 @@ func computePolyLayout(hash []byte) polyLayout {
 	// dummy prefix: hash[0] mod 16 -> 0..15 bytes
 	layout.dummyLen = int(hash[0]) % 16
 
-	perm := [6]int{0, 1, 2, 3, 4, 5}
+	perm := [PolyHeaderSize]int{0, 1, 2, 3, 4, 5}
 	for i := 5; i > 0; i-- {
-		j := int(hash[6-i]) % (i + 1)
+		j := int(hash[PolyHeaderSize-i]) % (i + 1)
 		perm[i], perm[j] = perm[j], perm[i]
 	}
 	layout.slotPerm = perm
 
 	// xor masks: hash[8..13]
-	for i := 0; i < 6; i++ {
+	for i := 0; i < PolyHeaderSize; i++ {
 		layout.xorMask[i] = hash[8+i]
 	}
 
@@ -119,7 +119,7 @@ func (frame *Frame) MarshalPolymorphic(chainHash []byte) ([]byte, error) {
 		buffer[i] = chainHash[16+(i%16)] ^ byte(i)
 	}
 
-	canonicalHeader := [6]byte{
+	canonicalHeader := [PolyHeaderSize]byte{
 		byte(totalLen >> 8),
 		byte(totalLen & 0xFF),
 		frame.Type,
@@ -128,12 +128,12 @@ func (frame *Frame) MarshalPolymorphic(chainHash []byte) ([]byte, error) {
 		byte(payloadLen & 0xFF),
 	}
 
-	for i := 0; i < 6; i++ {
+	for i := 0; i < PolyHeaderSize; i++ {
 		canonicalHeader[i] ^= layout.xorMask[i]
 	}
 
 	headerStart := layout.dummyLen
-	for pos := 0; pos < 6; pos++ {
+	for pos := 0; pos < PolyHeaderSize; pos++ {
 		buffer[headerStart+pos] = canonicalHeader[layout.slotPerm[pos]]
 	}
 
@@ -157,22 +157,22 @@ func UnmarshalPolymorphic(data []byte, chainHash []byte) (*Frame, error) {
 	}
 
 	headerStart := layout.dummyLen
-	permuted := [6]byte{}
-	for i := 0; i < 6; i++ {
+	permuted := [PolyHeaderSize]byte{}
+	for i := 0; i < PolyHeaderSize; i++ {
 		permuted[i] = data[headerStart+i]
 	}
 
-	var inversePerm [6]int
-	for pos := 0; pos < 6; pos++ {
+	var inversePerm [PolyHeaderSize]int
+	for pos := 0; pos < PolyHeaderSize; pos++ {
 		inversePerm[layout.slotPerm[pos]] = pos
 	}
 
-	var canonicalHeader [6]byte
-	for logicalIndex := 0; logicalIndex < 6; logicalIndex++ {
+	var canonicalHeader [PolyHeaderSize]byte
+	for logicalIndex := 0; logicalIndex < PolyHeaderSize; logicalIndex++ {
 		canonicalHeader[logicalIndex] = permuted[inversePerm[logicalIndex]]
 	}
 
-	for i := 0; i < 6; i++ {
+	for i := 0; i < PolyHeaderSize; i++ {
 		canonicalHeader[i] ^= layout.xorMask[i]
 	}
 
@@ -185,7 +185,7 @@ func UnmarshalPolymorphic(data []byte, chainHash []byte) (*Frame, error) {
 	if expectedWireSize != len(data) {
 		return nil, ErrInvalidLayout
 	}
-	if totalLen < 6 {
+	if totalLen < PolyHeaderSize {
 		return nil, ErrFrameTooSmall
 	}
 
