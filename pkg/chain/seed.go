@@ -6,7 +6,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
-	"mrchizaa/pkg/protocol" // todo: переделать на github
+
+	"github.com/niccotte404/MrChiza/pkg/protocol"
 )
 
 var (

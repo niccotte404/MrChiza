@@ -4,8 +4,9 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
-	"mrchizaa/pkg/protocol" // todo: поменять на github
 	"sync"
+
+	protocol "github.com/niccotte404/MrChiza/pkg/protocol"
 )
 
 type State struct {
@@ -39,7 +40,7 @@ func NewState(seed []byte, depth int) *State {
 	}
 }
 
-func (state *State) AdvanceHash(payload []byte) []byte {
+func (state *State) Advance(payload []byte) []byte {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
