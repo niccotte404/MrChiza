@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 
@@ -19,8 +20,8 @@ const (
 type Framer struct {
 	conn    net.Conn
 	aead    cipher.AEAD
-	sendCtr uint64 // Monotonic counter for outgoing frames, used as AEAD nonce
-	recvCtr uint64 // Monotonic counter for incoming frames, used as AEAD nonce
+	sendCtr uint64 // AEAD nonce counter (always increments, never resets)
+	recvCtr uint64 // AEAD nonce counter for receive
 }
 
 func NewFramer(conn net.Conn, encryptionKey []byte) (*Framer, error) {
@@ -35,11 +36,15 @@ func NewFramer(conn net.Conn, encryptionKey []byte) (*Framer, error) {
 	return &Framer{conn: conn, aead: gcm}, nil
 }
 
-func (f *Framer) WriteFrame(frame *protocol.Frame, chainHash []byte) error {
-	plaintext, err := frame.MarshalPolymorphic(chainHash)
+func (f *Framer) WriteFrame(frame *protocol.Frame, chainHash []byte, seqNum uint64) error {
+	polyData, err := frame.MarshalPolymorphic(chainHash)
 	if err != nil {
 		return err
 	}
+
+	plaintext := make([]byte, protocol.SeqSize+len(polyData))
+	binary.BigEndian.PutUint64(plaintext[:protocol.SeqSize], seqNum)
+	copy(plaintext[protocol.SeqSize:], polyData)
 
 	f.sendCtr++
 	nonce := make([]byte, f.aead.NonceSize())
@@ -54,20 +59,20 @@ func (f *Framer) WriteFrame(frame *protocol.Frame, chainHash []byte) error {
 	return err
 }
 
-func (f *Framer) ReadFrame(chainHash []byte) (*protocol.Frame, error) {
+func (f *Framer) ReadFrameRaw() (seqNum uint64, polyData []byte, err error) {
 	lenBuf := make([]byte, 2)
-	if _, err := io.ReadFull(f.conn, lenBuf); err != nil {
-		return nil, err
+	if _, err = io.ReadFull(f.conn, lenBuf); err != nil {
+		return 0, nil, err
 	}
 
 	ciphertextLen := int(binary.BigEndian.Uint16(lenBuf))
 	if ciphertextLen > maxWireSize {
-		return nil, protocol.ErrFrameTooLarge
+		return 0, nil, protocol.ErrFrameTooLarge
 	}
 
 	ciphertext := make([]byte, ciphertextLen)
-	if _, err := io.ReadFull(f.conn, ciphertext); err != nil {
-		return nil, err
+	if _, err = io.ReadFull(f.conn, ciphertext); err != nil {
+		return 0, nil, err
 	}
 
 	f.recvCtr++
@@ -76,16 +81,38 @@ func (f *Framer) ReadFrame(chainHash []byte) (*protocol.Frame, error) {
 
 	plaintext, err := f.aead.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 
-	return protocol.UnmarshalPolymorphic(plaintext, chainHash)
+	if len(plaintext) < protocol.SeqSize {
+		return 0, nil, protocol.ErrFrameTooSmall
+	}
+
+	seqNum = binary.BigEndian.Uint64(plaintext[:protocol.SeqSize])
+	polyData = plaintext[protocol.SeqSize:]
+	return seqNum, polyData, nil
+}
+
+func (f *Framer) ReadFrame(chainHash []byte) (uint64, *protocol.Frame, error) {
+	seqNum, polyData, err := f.ReadFrameRaw()
+	if err != nil {
+		return 0, nil, err
+	}
+
+	frame, err := protocol.UnmarshalPolymorphic(polyData, chainHash)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	return seqNum, frame, nil
 }
 
 func SendControlFrame(framer *Framer, sendMorph *morpher.Morpher, data []byte) error {
 	chainHash := sendMorph.ChainCurrent()
+	seqNum := sendMorph.ChainCounter()
 
-	sendMorph.Next(data)
+	// Advance chain
+	sendMorph.Next()
 
 	frame := &protocol.Frame{
 		Type:    protocol.FrameControl,
@@ -94,18 +121,23 @@ func SendControlFrame(framer *Framer, sendMorph *morpher.Morpher, data []byte) e
 		Padding: morpher.GeneratePadding(controlFramePaddingSize),
 	}
 
-	return framer.WriteFrame(frame, chainHash)
+	return framer.WriteFrame(frame, chainHash, seqNum)
 }
 
 func ReadControlFrame(framer *Framer, recvMorph *morpher.Morpher) ([]byte, error) {
 	chainHash := recvMorph.ChainCurrent()
 
-	frame, err := framer.ReadFrame(chainHash)
+	seqNum, frame, err := framer.ReadFrame(chainHash)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read control frame: %w", err)
 	}
 
-	recvMorph.Next(frame.Payload)
+	expectedSeq := recvMorph.ChainCounter()
+	if seqNum != expectedSeq {
+		return nil, fmt.Errorf("control frame seq mismatch: got %d, expected %d", seqNum, expectedSeq)
+	}
+
+	recvMorph.Next()
 
 	return frame.Payload, nil
 }

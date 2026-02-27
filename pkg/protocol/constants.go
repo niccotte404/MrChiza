@@ -11,7 +11,7 @@ const (
 	FlagFragment  byte = 0x01
 	FlagFinalFrag byte = 0x02
 
-	MaxFrameSize   = 16384 // 16 KB max frame (include dummy)
+	MaxFrameSize   = 16384 // 16 KB max frame (wire size including dummy)
 	MaxPaddingSize = 1460
 
 	PolyHeaderSize = 6
@@ -34,4 +34,8 @@ const (
 	GCMNonceSize = 12
 	KeySize      = 32 // 256-bit keys
 	GCMTagSize   = 16
+
+	SeqSize = 8
+
+	MaxResyncGap = 256
 )

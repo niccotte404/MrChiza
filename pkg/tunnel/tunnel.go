@@ -2,6 +2,8 @@ package tunnel
 
 import (
 	"errors"
+	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -12,6 +14,7 @@ import (
 
 var (
 	ErrSessionClosed = errors.New("session closed")
+	ErrResyncFailed  = errors.New("resync failed: gap too large")
 )
 
 type Session struct {
@@ -73,7 +76,9 @@ func (s *Session) proxyOutbound() error {
 		payload := buf[:n]
 
 		chainHash := s.sendMorph.ChainCurrent()
-		decision := s.sendMorph.Next(payload)
+		seqNum := s.sendMorph.ChainCounter()
+
+		decision := s.sendMorph.Next()
 
 		if decision.Delay > 0 {
 			time.Sleep(decision.Delay)
@@ -88,7 +93,7 @@ func (s *Session) proxyOutbound() error {
 		}
 
 		s.sendMu.Lock()
-		err = s.framer.WriteFrame(frame, chainHash)
+		err = s.framer.WriteFrame(frame, chainHash, seqNum)
 		s.sendMu.Unlock()
 		if err != nil {
 			return err
@@ -98,14 +103,36 @@ func (s *Session) proxyOutbound() error {
 
 func (s *Session) proxyInbound() error {
 	for {
-		chainHash := s.recvMorph.ChainCurrent()
-
-		frame, err := s.framer.ReadFrame(chainHash)
+		seqNum, polyData, err := s.framer.ReadFrameRaw()
 		if err != nil {
 			return err
 		}
 
-		s.recvMorph.Next(frame.Payload)
+		expectedCounter := s.recvMorph.ChainCounter()
+
+		if seqNum < expectedCounter {
+			log.Printf("[resync] dropping old packet: seq=%d, expected=%d", seqNum, expectedCounter)
+			continue
+		}
+
+		if seqNum > expectedCounter {
+			gap := seqNum - expectedCounter
+			if gap > protocol.MaxResyncGap {
+				return fmt.Errorf("%w: gap=%d", ErrResyncFailed, gap)
+			}
+			log.Printf("[resync] fast-forwarding chain: %d → %d (gap=%d)",
+				expectedCounter, seqNum, gap)
+			s.recvMorph.AdvanceTo(seqNum)
+		}
+
+		chainHash := s.recvMorph.ChainCurrent()
+
+		frame, err := protocol.UnmarshalPolymorphic(polyData, chainHash)
+		if err != nil {
+			return fmt.Errorf("unmarshal at seq %d: %w", seqNum, err)
+		}
+
+		s.recvMorph.Next()
 
 		switch frame.Type {
 		case protocol.FrameKeepalive:

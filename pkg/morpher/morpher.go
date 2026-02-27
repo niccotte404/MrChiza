@@ -29,8 +29,8 @@ type Decision struct {
 	TargetSize  int
 }
 
-func (m *Morpher) Next(payload []byte) Decision {
-	m.chain.Advance(payload)
+func (m *Morpher) Next() Decision {
+	m.chain.Advance()
 
 	transVal := m.chain.StateTransition()
 	m.currentState = m.profile.SelectTransition(m.currentState, transVal)
@@ -44,7 +44,6 @@ func (m *Morpher) Next(payload []byte) Decision {
 	}
 
 	paddingSize := m.chain.PaddingSize(params.SizeRange[0], params.SizeRange[1])
-
 	if paddingSize > protocol.MaxPaddingSize {
 		paddingSize = protocol.MaxPaddingSize
 	}
@@ -55,14 +54,21 @@ func (m *Morpher) Next(payload []byte) Decision {
 		delay = protocol.MaxMorphDelay
 	}
 
-	fragment := m.chain.FragmentDecision(0.1) // 10% chance to fragment
+	fragment := m.chain.FragmentDecision(0.1)
 
 	return Decision{
 		PaddingSize: paddingSize,
 		Delay:       delay,
 		Fragment:    fragment,
-		TargetSize:  len(payload) + paddingSize + protocol.PolyHeaderSize,
 	}
+}
+
+func (m *Morpher) AdvanceTo(counter uint64) {
+	currentCounter := m.chain.Counter()
+	if counter <= currentCounter {
+		return
+	}
+	m.chain.AdvanceTo(counter)
 }
 
 func (m *Morpher) CurrentState() string {
@@ -71,6 +77,10 @@ func (m *Morpher) CurrentState() string {
 
 func (m *Morpher) ChainCurrent() []byte {
 	return m.chain.Current()
+}
+
+func (m *Morpher) ChainCounter() uint64 {
+	return m.chain.Counter()
 }
 
 func GeneratePadding(size int) []byte {

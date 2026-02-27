@@ -6,16 +6,16 @@ import (
 	"encoding/binary"
 	"sync"
 
-	protocol "github.com/niccotte404/MrChiza/pkg/protocol"
+	"github.com/niccotte404/MrChiza/pkg/protocol"
 )
 
 type State struct {
-	mu          sync.Mutex
-	depth       int
-	history     [][]byte // length = depth
-	currentHash []byte   // 32 bytes
-	counter     uint64
-	seed        []byte
+	mu      sync.Mutex
+	depth   int
+	history [][]byte // Ring buffer of previous hashes
+	current []byte
+	counter uint64 // Monotonic packet counter
+	seed    []byte
 }
 
 func NewState(seed []byte, depth int) *State {
@@ -28,110 +28,120 @@ func NewState(seed []byte, depth int) *State {
 
 	initialHash := computeHMAC(seed, nil, 0)
 
-	history := make([][]byte, depth)
+	history := make([][]byte, 0, depth)
 	history = append(history, initialHash)
 
 	return &State{
-		depth:       depth,
-		history:     history,
-		currentHash: initialHash,
-		counter:     0,
-		seed:        seed,
+		depth:   depth,
+		history: history,
+		current: initialHash,
+		counter: 0,
+		seed:    seed,
 	}
 }
 
-func (state *State) Advance(payload []byte) []byte {
-	state.mu.Lock()
-	defer state.mu.Unlock()
+func (s *State) Advance() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	state.counter++
-	payloadHash := sha256.Sum256(payload)
+	return s.advanceInternal()
+}
+
+func (s *State) advanceInternal() []byte {
+	s.counter++
 
 	var key []byte
-	for i := len(state.history) - 1; i >= 0 && i >= len(state.history)-state.depth; i-- {
-		key = append(key, state.history[i]...)
+	for i := len(s.history) - 1; i >= 0 && i >= len(s.history)-s.depth; i-- {
+		key = append(key, s.history[i]...)
 	}
 
-	newHash := computeHMAC(key, payloadHash[:], state.counter)
+	newHash := computeHMAC(key, nil, s.counter)
 
-	state.history = append(state.history, newHash)
-	if len(state.history) > state.depth*2 {
-		state.history = state.history[len(state.history)-state.depth:]
+	s.history = append(s.history, newHash)
+	if len(s.history) > s.depth*2 {
+		s.history = s.history[len(s.history)-s.depth:]
 	}
 
-	state.currentHash = newHash
+	s.current = newHash
 	return newHash
 }
 
-func (state *State) Current() []byte {
-	state.mu.Lock()
-	defer state.mu.Unlock()
+// AdvanceTo catch up after packet loss by receiver
+func (s *State) AdvanceTo(targetCounter uint64) []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	result := make([]byte, len(state.currentHash))
-	copy(result, state.currentHash)
+	if targetCounter <= s.counter {
+		return s.current
+	}
 
+	for s.counter < targetCounter {
+		s.advanceInternal()
+	}
+
+	return s.current
+}
+
+func (s *State) Current() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]byte, len(s.current))
+	copy(result, s.current)
 	return result
 }
 
-func (state *State) Counter() uint64 {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	return state.counter
+func (s *State) Counter() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.counter
 }
 
-func (state *State) PaddingSize(minMs, maxMs int) int {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	return extractRange(state.currentHash, protocol.HashSegTiming, minMs, maxMs)
+func (s *State) PaddingSize(minSize, maxSize int) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return extractRange(s.current, protocol.HashSegPadding, minSize, maxSize)
 }
 
-func (state *State) DelayMs(minMs, maxMs int) int {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	return extractRange(state.currentHash, protocol.HashSegTiming, minMs, maxMs)
+func (s *State) DelayMs(minMs, maxMs int) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return extractRange(s.current, protocol.HashSegTiming, minMs, maxMs)
 }
 
-func (state *State) FragmentDecision(threshold float64) bool {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	val := binary.BigEndian.Uint32(state.currentHash[protocol.HashSegFragment : protocol.HashSegFragment+4])
+func (s *State) FragmentDecision(threshold float64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	val := binary.BigEndian.Uint32(s.current[protocol.HashSegFragment : protocol.HashSegFragment+4])
 	normalized := float64(val) / float64(^uint32(0))
 	return normalized < threshold
 }
 
-func (state *State) StateTransition() float64 {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	val := binary.BigEndian.Uint32(state.currentHash[protocol.HashSegState : protocol.HashSegState+4])
-
+func (s *State) StateTransition() float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	val := binary.BigEndian.Uint32(s.current[protocol.HashSegState : protocol.HashSegState+4])
 	return float64(val) / float64(^uint32(0))
 }
 
 func computeHMAC(key []byte, data []byte, counter uint64) []byte {
 	if len(key) == 0 {
-		key = []byte("hashchain-init") // todo: поменять на генерацию через sha256
+		key = []byte("hashchain-init")
 	}
-	hash := hmac.New(sha256.New, key)
+	h := hmac.New(sha256.New, key)
 	if data != nil {
-		hash.Write(data)
+		h.Write(data)
 	}
 	counterBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(counterBytes, counter)
-	hash.Write(counterBytes)
-
-	return hash.Sum(nil)
+	h.Write(counterBytes)
+	return h.Sum(nil)
 }
 
-func extractRange(hash []byte, offset, min, max int) int {
+func extractRange(hash []byte, offset int, min, max int) int {
 	if min >= max {
 		return min
 	}
 	val := binary.BigEndian.Uint32(hash[offset : offset+4])
 	rangeSize := uint32(max - min + 1)
-
 	return min + int(val%rangeSize)
 }
