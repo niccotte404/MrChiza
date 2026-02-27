@@ -18,9 +18,9 @@ func TestChainDeterminism(t *testing.T) {
 		{0x00, 0x01, 0x02, 0x03},
 	}
 
-	for i, payload := range payloads {
-		h1 := chain1.Advance(payload)
-		h2 := chain2.Advance(payload)
+	for i := range payloads {
+		h1 := chain1.Advance()
+		h2 := chain2.Advance()
 		if !bytes.Equal(h1, h2) {
 			t.Errorf("packet %d: chains diverged\n  chain1: %x\n  chain2: %x", i, h1, h2)
 		}
@@ -33,14 +33,14 @@ func TestChainDivergence(t *testing.T) {
 	chain1 := NewState(seed, 1)
 	chain2 := NewState(seed, 1)
 
-	h1 := chain1.Advance([]byte("same payload"))
-	h2 := chain2.Advance([]byte("same payload"))
+	h1 := chain1.Advance()
+	h2 := chain2.Advance()
 	if !bytes.Equal(h1, h2) {
 		t.Fatal("chains should match after same payload")
 	}
 
-	h1 = chain1.Advance([]byte("payload A"))
-	h2 = chain2.Advance([]byte("payload B"))
+	h1 = chain1.Advance()
+	h2 = chain2.Advance()
 	if bytes.Equal(h1, h2) {
 		t.Fatal("chains should diverge after different payloads")
 	}
@@ -52,21 +52,19 @@ func TestChainDepth(t *testing.T) {
 	chain1 := NewState(seed, 1)
 	chain3 := NewState(seed, 3)
 
-	payload := []byte("test payload")
-
-	h1 := chain1.Advance(payload)
-	h3 := chain3.Advance(payload)
+	h1 := chain1.Advance()
+	h3 := chain3.Advance()
 	if !bytes.Equal(h1, h3) {
 		t.Fatal("first packet should be identical regardless of depth")
 	}
 
 	for i := 0; i < 5; i++ {
-		chain1.Advance(payload)
-		chain3.Advance(payload)
+		chain1.Advance()
+		chain3.Advance()
 	}
 
-	h1 = chain1.Advance([]byte("divergence test"))
-	h3 = chain3.Advance([]byte("divergence test"))
+	h1 = chain1.Advance()
+	h3 = chain3.Advance()
 
 	if len(h1) != 32 || len(h3) != 32 {
 		t.Fatal("hashes should be 32 bytes")
@@ -78,7 +76,7 @@ func TestExtractRange(t *testing.T) {
 	c := NewState(seed, 1)
 
 	for i := 0; i < 100; i++ {
-		c.Advance([]byte{byte(i)})
+		c.Advance()
 		padding := c.PaddingSize(0, 1460)
 		if padding < 0 || padding > 1460 {
 			t.Errorf("padding %d out of range [0, 1460]", padding)
@@ -139,9 +137,8 @@ func TestSeedDerivation(t *testing.T) {
 func BenchmarkChainAdvance(b *testing.B) {
 	seed := []byte("benchmark-seed-32-bytes-long!!!!")
 	c := NewState(seed, 1)
-	payload := make([]byte, 1400)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		c.Advance(payload)
+		c.Advance()
 	}
 }

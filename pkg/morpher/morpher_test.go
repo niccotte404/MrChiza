@@ -13,8 +13,8 @@ func TestMorpherDeterminism(t *testing.T) {
 	chain1 := chain.NewState(seed, 1)
 	chain2 := chain.NewState(seed, 1)
 
-	morph1 := New(profile, chain1)
-	morph2 := New(profile, chain2)
+	morph1 := New(chain1, profile)
+	morph2 := New(chain2, profile)
 
 	payloads := [][]byte{
 		[]byte("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"),
@@ -22,9 +22,9 @@ func TestMorpherDeterminism(t *testing.T) {
 		[]byte("some more data flowing through the tunnel"),
 	}
 
-	for i, payload := range payloads {
-		d1 := morph1.Next(payload)
-		d2 := morph2.Next(payload)
+	for i := range payloads {
+		d1 := morph1.Next()
+		d2 := morph2.Next()
 
 		if d1.PaddingSize != d2.PaddingSize {
 			t.Errorf("packet %d: padding mismatch: %d vs %d", i, d1.PaddingSize, d2.PaddingSize)
@@ -45,11 +45,11 @@ func TestMorpherStateTransitions(t *testing.T) {
 	seed := []byte("test-seed-32-bytes-long-enough!!")
 	profile := DefaultBrowsingProfile()
 	c := chain.NewState(seed, 1)
-	m := New(profile, c)
+	m := New(c, profile)
 
 	states := make(map[string]int)
 	for i := 0; i < 1000; i++ {
-		m.Next([]byte{byte(i % 256)})
+		m.Next()
 		states[m.CurrentState()]++
 	}
 
@@ -90,11 +90,11 @@ func TestStreamingProfile(t *testing.T) {
 	seed := []byte("streaming-test-seed-32-bytes!!!!")
 	profile := DefaultStreamingProfile()
 	c := chain.NewState(seed, 1)
-	m := New(profile, c)
+	m := New(c, profile)
 
 	states := make(map[string]int)
 	for i := 0; i < 1000; i++ {
-		m.Next([]byte{byte(i % 256)})
+		m.Next()
 		states[m.CurrentState()]++
 	}
 
