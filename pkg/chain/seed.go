@@ -81,9 +81,9 @@ func hkdfExpand(prk, info []byte, length int) ([]byte, error) {
 	if n > 255 {
 		return nil, ErrInvalidHkdf
 	}
-	okm := make([]byte, n*hashLen)
+	okm := make([]byte, 0, n*hashLen)
 	var prev []byte
-	for i := 0; i <= n; i++ {
+	for i := 1; i <= n; i++ {
 		hmc := hmac.New(sha256.New, prk)
 		hmc.Write(prev)
 		hmc.Write(info)
