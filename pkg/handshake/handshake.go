@@ -1,4 +1,4 @@
-package pkg
+package handshake
 
 import (
 	"crypto/ecdh"

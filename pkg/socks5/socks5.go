@@ -1,4 +1,4 @@
-package pkg
+package socks5
 
 import (
 	"encoding/binary"
