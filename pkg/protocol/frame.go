@@ -151,10 +151,10 @@ func (frame *Frame) MarshalPolymorphic(chainHash []byte) ([]byte, error) {
 	return buffer, nil
 }
 
-func (frame *Frame) UnmarshalPolymorphic(data []byte, chainHash []byte) (*Frame, error) {
+func UnmarshalPolymorphic(data []byte, chainHash []byte) (*Frame, error) {
 	layout := computePolyLayout(chainHash)
 
-	if len(data) < int(layout.dummyLen) {
+	if len(data) < layout.dummyLen {
 		return nil, ErrFrameTooSmall
 	}
 
