@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 
-	"github.com/niccotte404/MrChiza/pkg/chain"
 	"github.com/niccotte404/MrChiza/pkg/morpher"
 	"github.com/niccotte404/MrChiza/pkg/protocol"
 )
@@ -83,13 +82,10 @@ func (f *Framer) ReadFrame(chainHash []byte) (*protocol.Frame, error) {
 	return protocol.UnmarshalPolymorphic(plaintext, chainHash)
 }
 
-func (f *Framer) Counters() (send, recv uint64) {
-	return f.sendCtr, f.recvCtr
-}
+func SendControlFrame(framer *Framer, sendMorph *morpher.Morpher, data []byte) error {
+	chainHash := sendMorph.ChainCurrent()
 
-func SendControlFrame(framer *Framer, chainState *chain.State, morpherInst *morpher.Morpher, data []byte) error {
-	chainHash := chainState.Current()
-	morpherInst.Next(data) // advance chain
+	sendMorph.Next(data)
 
 	frame := &protocol.Frame{
 		Type:    protocol.FrameControl,
@@ -101,12 +97,15 @@ func SendControlFrame(framer *Framer, chainState *chain.State, morpherInst *morp
 	return framer.WriteFrame(frame, chainHash)
 }
 
-func ReadControlFrame(framer *Framer, chainState *chain.State, morpherInst *morpher.Morpher) ([]byte, error) {
-	chainHash := chainState.Current()
+func ReadControlFrame(framer *Framer, recvMorph *morpher.Morpher) ([]byte, error) {
+	chainHash := recvMorph.ChainCurrent()
+
 	frame, err := framer.ReadFrame(chainHash)
 	if err != nil {
 		return nil, err
 	}
-	morpherInst.Next(frame.Payload) // advance chain to stay in sync
+
+	recvMorph.Next(frame.Payload)
+
 	return frame.Payload, nil
 }

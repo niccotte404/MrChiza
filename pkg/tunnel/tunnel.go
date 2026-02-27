@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/niccotte404/MrChiza/pkg/chain"
 	"github.com/niccotte404/MrChiza/pkg/morpher"
 	"github.com/niccotte404/MrChiza/pkg/protocol"
 )
@@ -19,10 +18,7 @@ type Session struct {
 	framer    *Framer
 	localConn net.Conn
 
-	sendChain *chain.State
 	sendMorph *morpher.Morpher
-
-	recvChain *chain.State
 	recvMorph *morpher.Morpher
 
 	sendMu  sync.Mutex
@@ -33,9 +29,8 @@ type Session struct {
 func NewSession(
 	conn net.Conn,
 	localConn net.Conn,
-	sendChain *chain.State,
-	recvChain *chain.State,
-	profile *morpher.Profile,
+	sendMorph *morpher.Morpher,
+	recvMorph *morpher.Morpher,
 	encryptionKey []byte,
 	existingFramer *Framer,
 ) (*Session, error) {
@@ -54,10 +49,8 @@ func NewSession(
 	return &Session{
 		framer:    framer,
 		localConn: localConn,
-		sendChain: sendChain,
-		sendMorph: morpher.New(profile, sendChain),
-		recvChain: recvChain,
-		recvMorph: morpher.New(profile, recvChain),
+		sendMorph: sendMorph,
+		recvMorph: recvMorph,
 	}, nil
 }
 
@@ -79,7 +72,7 @@ func (s *Session) proxyOutbound() error {
 		}
 		payload := buf[:n]
 
-		chainHash := s.sendChain.Current()
+		chainHash := s.sendMorph.ChainCurrent()
 		decision := s.sendMorph.Next(payload)
 
 		if decision.Delay > 0 {
@@ -105,7 +98,8 @@ func (s *Session) proxyOutbound() error {
 
 func (s *Session) proxyInbound() error {
 	for {
-		chainHash := s.recvChain.Current()
+		chainHash := s.recvMorph.ChainCurrent()
+
 		frame, err := s.framer.ReadFrame(chainHash)
 		if err != nil {
 			return err

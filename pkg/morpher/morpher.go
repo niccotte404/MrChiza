@@ -14,9 +14,9 @@ type Morpher struct {
 	currentState string
 }
 
-func New(profile *Profile, chain *chain.State) *Morpher {
+func New(chainState *chain.State, profile *Profile) *Morpher {
 	return &Morpher{
-		chain:        chain,
+		chain:        chainState,
 		profile:      profile,
 		currentState: profile.InitState,
 	}
@@ -29,13 +29,13 @@ type Decision struct {
 	TargetSize  int
 }
 
-func (morpher *Morpher) Next(payload []byte) Decision {
-	morpher.chain.Advance(payload)
+func (m *Morpher) Next(payload []byte) Decision {
+	m.chain.Advance(payload)
 
-	transitionValue := morpher.chain.StateTransition()
-	morpher.currentState = morpher.profile.SelectTransition(morpher.currentState, transitionValue)
+	transVal := m.chain.StateTransition()
+	m.currentState = m.profile.SelectTransition(m.currentState, transVal)
 
-	params, ok := morpher.profile.StateParams[morpher.currentState]
+	params, ok := m.profile.StateParams[m.currentState]
 	if !ok {
 		params = StateParameters{
 			SizeRange: [2]int{0, 64},
@@ -43,18 +43,19 @@ func (morpher *Morpher) Next(payload []byte) Decision {
 		}
 	}
 
-	paddingSize := morpher.chain.PaddingSize(params.SizeRange[0], params.SizeRange[1])
+	paddingSize := m.chain.PaddingSize(params.SizeRange[0], params.SizeRange[1])
+
 	if paddingSize > protocol.MaxPaddingSize {
 		paddingSize = protocol.MaxPaddingSize
 	}
 
-	delayMs := morpher.chain.DelayMs(params.DelayMs[0], params.DelayMs[1])
+	delayMs := m.chain.DelayMs(params.DelayMs[0], params.DelayMs[1])
 	delay := time.Duration(delayMs) * time.Millisecond
 	if delay > protocol.MaxMorphDelay {
 		delay = protocol.MaxMorphDelay
 	}
 
-	fragment := morpher.chain.FragmentDecision(0.1) // todo: вынести в conf
+	fragment := m.chain.FragmentDecision(0.1) // 10% chance to fragment
 
 	return Decision{
 		PaddingSize: paddingSize,
@@ -64,8 +65,12 @@ func (morpher *Morpher) Next(payload []byte) Decision {
 	}
 }
 
-func (morpher *Morpher) CurrentState() string {
-	return morpher.currentState
+func (m *Morpher) CurrentState() string {
+	return m.currentState
+}
+
+func (m *Morpher) ChainCurrent() []byte {
+	return m.chain.Current()
 }
 
 func GeneratePadding(size int) []byte {
